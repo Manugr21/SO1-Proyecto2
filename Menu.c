@@ -11,11 +11,11 @@
 #include <sys/shm.h>
 #include <errno.h>
 
-#define MEMORIARUTA "/bin/ls"				// Ruta para la llave de la memoria - ftok
-#define MEMORIAID 1							// Id used on ftok for shmget key
-#define TAMANOCOMPARTIDO sizeof(int) * 105  //Tamaño de la memoria compartida
-#define SEMAFORORUTA "/bin/ls"				// Ruta para la llave del semaforo - ftok
-#define SEMAFOROID 2						// Id used on ftok for semget key
+#define MEMORIARUTA "/bin/ls"			   // Ruta para la llave de la memoria - ftok
+#define MEMORIAID 1						   // Id used on ftok for shmget key
+#define TAMANOCOMPARTIDO sizeof(int) * 105 //Tamaño de la memoria compartida
+#define SEMAFORORUTA "/bin/ls"			   // Ruta para la llave del semaforo - ftok
+#define SEMAFOROID 2					   // Id used on ftok for semget key
 
 #define ESC 27   //Valor ascii de ESC
 #define ENTER 10 //Valor ascii de ENTER
@@ -99,6 +99,8 @@ void *repintar_todo();
 void mover_defensor(int direccion);
 void mover_invasor(int direccion);
 void reiniciar_memoria();
+void *detectar_colisiones_defensor();
+void *detectar_colisiones_invasor();
 
 // Variable local que indica el bando
 // '1' = Defensores
@@ -112,14 +114,12 @@ bool jugar;
 int direccion;
 
 int *memoria;
-int balas_activas;
 
 int main(int argc, char *argv[])
 {
 	primero = FALSE;
 	jugar = TRUE;
 	direccion = 1;
-	balas_activas = 0;
 	//Variables de Memoria compartida
 	key_t k_memoria; //Llave para acceder a la memoria compartida
 	int respuesta;   //valida que algunos comandos se realicen correctamente
@@ -231,9 +231,12 @@ int main(int argc, char *argv[])
 	 * '98' = Bandera de vida de la Nave 19 - Normal
 	 * '99' = Bandera de vida de la Nave 20 - Normal
 	 * 
-	 * '100' = Bandera[0] del algoritmo de Dekker version 5 | movimiento y,x
-	 * '101' = Bandera[1] del algoritmo de Dekker version 5 | movimiento y,x
-	 * '102' = Turno del algoritmo de Dekker version 5 | movimiento y,x
+	 * '100' = Balas activas del Defensor
+	 * '101' = Balas activas del Invasor
+	 * 
+	 * '102' = Bandera[0] para Dekker - movimiento
+	 * '103' = Bandera[1] para Dekker - movimiento
+	 * '104' = Turno para Dekker - movimiento
 	 * 
 	 *********************************************/
 	memoria = NULL;
@@ -285,54 +288,67 @@ int main(int argc, char *argv[])
 	//Inicia el modo ncurses
 	inicializar_pantalla();
 
-	if(memoria[0]!=3)
-	while (jugar)
-	{
-		//Imprime la pantalla de bienvenida al juego
-		pantalla_bienvenida();
-		if (!jugar)
+	if (memoria[0] != 3)
+		while (jugar)
 		{
-			break;
-		} //sale del juego
+			//Imprime la pantalla de bienvenida al juego
+			pantalla_bienvenida();
+			if (!jugar)
+			{
+				break;
+			} //sale del juego
 
-		//Despliega la pantalla de seleccion de bandos
-		memoria[0] = seleccion_de_bandos(memoria[0]);
+			//Despliega la pantalla de seleccion de bandos
+			memoria[0] = seleccion_de_bandos(memoria[0]);
 
-		//Semaforo para que ambos jugadores inicien la partida al mismo tiempo
-		if(bando == 1)
-		{
-			pantalla_espera();
-			inicializar_juego();
-			if(primero){
-				LockSemaphore(id_semaforo, 0);
-			}else{
-				UnlockSemaphore(id_semaforo, 0);
+			//Semaforo para que ambos jugadores inicien la partida al mismo tiempo
+			if (bando == 1)
+			{
+				pantalla_espera();
+				inicializar_juego();
+				if (primero)
+				{
+					LockSemaphore(id_semaforo, 0);
+				}
+				else
+				{
+					UnlockSemaphore(id_semaforo, 0);
+				}
+				pthread_t cron;
+				pthread_t mov;
+				pthread_t pintar;
+				pthread_t colision;
+				pthread_create(&cron, NULL, &cronometro, NULL);
+				pthread_create(&mov, NULL, &mover_invasores, NULL);
+				pthread_create(&pintar, NULL, &repintar_todo, NULL);
+				pthread_create(&colision, NULL, &detectar_colisiones_defensor, NULL);
+				timeout(0);
+				cosas_j1();
 			}
-			pthread_t cron;
-			pthread_t mov;
-			pthread_t pintar;
-			pthread_create(&cron, NULL, &cronometro, NULL);
-			pthread_create(&mov, NULL, &mover_invasores, NULL);
-			pthread_create(&pintar, NULL, &repintar_todo, NULL);
-			cosas_j1();
-		}
-		else
-		{
-			pantalla_espera();
-			if(primero){
-				LockSemaphore(id_semaforo, 0);
-			}else{
-				UnlockSemaphore(id_semaforo, 0);
+			else
+			{
+				pantalla_espera();
+				if (primero)
+				{
+					LockSemaphore(id_semaforo, 0);
+				}
+				else
+				{
+					UnlockSemaphore(id_semaforo, 0);
+				}
+				pthread_t pintar;
+				pthread_t colision;
+				pthread_create(&pintar, NULL, &repintar_todo, NULL);
+				pthread_create(&colision, NULL, &detectar_colisiones_invasor, NULL);
+				timeout(0);
+				cosas_j2();
 			}
-			pthread_t pintar;
-			pthread_create(&pintar, NULL, &repintar_todo, NULL);
-			cosas_j2();
-		}
 
-		//Imprime los resultados de la partida
-		pantalla_Salida();
-		reiniciar_memoria(id_semaforo);
-	}
+			//Imprime los resultados de la partida
+			timeout(60000);
+			pantalla_Salida();
+			reiniciar_memoria(id_semaforo);
+		}
 
 	//Elimina la ventana usada para ncurses
 	endwin();
@@ -413,6 +429,11 @@ void inicializar_juego()
 	{
 		memoria[i] = 1;
 	}
+
+	memoria[100] = 0; //balas defensor
+	memoria[101] = 0; //balas invasor
+
+	memoria[104] = 0;
 }
 
 /**
@@ -447,7 +468,6 @@ void pantalla_bienvenida()
 
 void pantalla_Salida()
 {
-
 	int max_y = 0, max_x = 0;
 
 	clear();
@@ -536,35 +556,19 @@ void pantalla_espera()
 
 void *cronometro(void *data)
 {
-	//Inicia Dekker version 5
-	/*memoria[4] = memoria[1];
-	while (memoria[5] == memoria[0])
+	while (memoria[1])
 	{
-		if (memoria[6] == 1)
-		{
-			memoria[4] = 1;
-			while (memoria[6] == 1)
-			{
-			}
-			memoria[4] = 0;
-		}
-	}
-	/**INICIA REGION CRITICA**/
-	while(memoria[1]){
 		memoria[3]++; //Aumento los segundos
 		if (memoria[3] == 60)
 		{
 			memoria[2]++;   //Aumento los minutos
 			memoria[3] = 0; //Reseteo los segundos
 		}
-		if (memoria[2] == 1)
+		/*if (memoria[2] == 1)
 		{
 			memoria[1] = 0;
 			break;
-		} //Termino el juego al llegar a 1 min
-		/**FINALIZA REGION CRITICA** /
-		memoria[6] = 1;
-		memoria[4] = 1;*/
+		} //Termino el juego al llegar a 1 min*/
 		sleep(1);
 	}
 }
@@ -573,7 +577,7 @@ void cosas_j1()
 {
 	while (memoria[1])
 	{
-		/*//Inicia Dekker version 5
+		//Inicia Dekker version 5
 		memoria[4] = memoria[1];
 		while (memoria[5] == memoria[1])
 		{
@@ -589,16 +593,19 @@ void cosas_j1()
 		/**INICIA REGION CRITICA**/
 		int movimiento = getch();
 		mover_defensor(movimiento);
-		if(memoria[VIDAS_DEF] <= 0){
+		if (memoria[VIDAS_DEF] <= 0)
+		{
 			memoria[1] = 0;
 			memoria[GANADOR] = 2;
-		}else if(memoria[VIDAS_INV] <= 0 || memoria[PUNTUACION] >= 100){
+		}
+		else if (memoria[VIDAS_INV] <= 0 || memoria[PUNTUACION] >= 100)
+		{
 			memoria[1] = 0;
 			memoria[GANADOR] = 1;
 		}
-		/**FINALIZA REGION CRITICA** /
+		/**FINALIZA REGION CRITICA**/
 		memoria[6] = 1;
-		memoria[4] = 0;*/
+		memoria[4] = 0;
 		usleep(50000);
 	}
 }
@@ -607,7 +614,7 @@ void cosas_j2()
 {
 	while (memoria[1])
 	{
-		/*//Inicia Dekker version 5
+		//Inicia Dekker version 5
 		memoria[5] = memoria[1];
 		while (memoria[4] == memoria[1])
 		{
@@ -623,16 +630,19 @@ void cosas_j2()
 		/**INICIA REGION CRITICA**/
 		int movimiento = getch();
 		mover_invasor(movimiento);
-		if(memoria[VIDAS_DEF] <= 0){
+		if (memoria[VIDAS_DEF] <= 0)
+		{
 			memoria[1] = 0;
 			memoria[GANADOR] = 2;
-		}else if(memoria[VIDAS_INV] <= 0 || memoria[PUNTUACION] >= 100){
+		}
+		else if (memoria[VIDAS_INV] <= 0 || memoria[PUNTUACION] >= 100)
+		{
 			memoria[1] = 0;
 			memoria[GANADOR] = 1;
 		}
-		/**FINALIZA REGION CRITICA** /
+		/**FINALIZA REGION CRITICA**/
 		memoria[6] = 0;
-		memoria[5] = 0;*/
+		memoria[5] = 0;
 		usleep(50000);
 	}
 }
@@ -641,7 +651,8 @@ void *mover_invasores()
 {
 	int max_y = 0, max_x = 0;
 	getmaxyx(stdscr, max_y, max_x);
-	while(memoria[1]){
+	while (memoria[1])
+	{
 		if ((memoria[79] + 5 + direccion) >= max_x || (memoria[60] + direccion) < 0)
 		{
 			direccion *= -1;
@@ -668,26 +679,30 @@ void mover_balas()
 {
 	int max_y = 0, max_x = 0;
 	getmaxyx(stdscr, max_y, max_x);
-	for(int d = 20; d < 30; d++)
+	for (int d = 20; d < 30; d++)
 	{
-		if(memoria[d] >= 0 && memoria[d + 10] > 0){
-			memoria[d+10]--;
+		if (memoria[d] >= 0 && memoria[d + 10] > 0)
+		{
+			memoria[d + 10]--;
 		}
-		if(memoria[d + 10] == 0){
-			memoria[d+10] = -1;
+		if (memoria[d + 10] == 0)
+		{
+			memoria[d + 10] = -1;
 			memoria[d] = -1;
-			balas_activas--;
+			memoria[100]--;
 		}
 	}
-	for(int i = 40; i < 50; i++)
+	for (int i = 40; i < 50; i++)
 	{
-		if(memoria[i] >= 0 && memoria[i + 10] < max_y-1){
-			memoria[i+10]++;
+		if (memoria[i] >= 0 && memoria[i + 10] < max_y)
+		{
+			memoria[i + 10]++;
 		}
-		if(memoria[i + 10] == max_y-1){
-			memoria[i+10] = -1;
+		if (memoria[i + 10] == max_y - 1)
+		{
+			memoria[i + 10] = -1;
 			memoria[i] = -1;
-			balas_activas--;
+			memoria[101]--;
 		}
 	}
 }
@@ -696,17 +711,28 @@ void imprimir_balas()
 {
 	int max_y = 0, max_x = 0;
 	getmaxyx(stdscr, max_y, max_x);
-	for(int d = 20; d < 30; d++)
+	for (int d = 20; d < 30; d++)
 	{
-		if((memoria[d] > 0 || memoria[d] < max_x) && (memoria[d + 10] > 0 || memoria[d + 10] < max_y)){
-			mvprintw(memoria[d+10], memoria[d], "*");			
+		if ((memoria[d] > 0 || memoria[d] < max_x) && (memoria[d + 10] > 0 || memoria[d + 10] < max_y))
+		{
+			mvprintw(memoria[d + 10], memoria[d], "*");
 		}
 	}
-	for(int i = 40; i < 50; i++)
+	for (int i = 40; i < 50; i++)
 	{
-		if((memoria[i] > 0 && memoria[i] < max_x) && (memoria[i + 10] > 0 || memoria[i + 10] < max_y)){
-			mvprintw(memoria[i+10], memoria[i], "*");			
+		if ((memoria[i] > 0 && memoria[i] < max_x) && (memoria[i + 10] > 0 || memoria[i + 10] < max_y))
+		{
+			mvprintw(memoria[i + 10], memoria[i], "*");
 		}
+	}
+
+	if (bando == 1)
+	{
+		mvprintw(3 * max_y / 4, max_x - 15, "Balas: %02d", memoria[100]);
+	}
+	else if (bando == 2)
+	{
+		mvprintw(max_y / 4, max_x - 15, "Balas: %02d", memoria[101]);
 	}
 }
 
@@ -768,10 +794,9 @@ void mostrar_cronometro()
 	getmaxyx(stdscr, max_y, max_x);
 
 	mvprintw(0, max_x - 15, "Invasor: %d", memoria[VIDAS_INV]);
-	mvprintw((max_y / 2) - 1, max_x - 10, "Tiempo");
-	mvprintw(max_y / 2, max_x - 10, "%d:%02d", memoria[2], memoria[3]);
-	mvprintw(max_y-2, max_x - 15, "Defensor: %d", memoria[VIDAS_DEF]);
-
+	mvprintw((max_y / 2) - 1, max_x - 15, "Tiempo: %d:%02d", memoria[2], memoria[3]);
+	mvprintw(max_y / 2, max_x - 15, "Puntuacion %03d", memoria[PUNTUACION]);
+	mvprintw(max_y - 2, max_x - 15, "Defensor: %d", memoria[VIDAS_DEF]);
 }
 
 /**
@@ -1039,13 +1064,35 @@ void UnlockSemaphore(int id, int i)
 
 void *repintar_todo()
 {
-	while(memoria[1]){
+	int id = 1;
+	if (bando == 2)
+	{
+		id = 0;
+	}
+	while (memoria[1])
+	{
+		memoria[102 + id] = memoria[1];
+		while (memoria[102 + 1 - id] == memoria[1])
+		{
+			if (memoria[104] == 1 - id)
+			{
+				memoria[102 + id] = 0;
+				while (memoria[104] == 1 - id)
+				{
+				}
+				memoria[102 + id] = 1;
+			}
+		}
+		/**INICIA REGION CRITICA**/
 		clear();
 		mostrar_cronometro();
 		imprimir_invasores();
 		imprimir_comandantes();
 		imprimir_balas();
 		refresh();
+		/**FINALIZA REGION CRITICA**/
+		memoria[104] = 1 - id;
+		memoria[102 + id] = 0;
 		usleep(500);
 	}
 }
@@ -1054,18 +1101,26 @@ void mover_defensor(int direccion)
 {
 	int max_x = 0, max_y = 0;
 	getmaxyx(stdscr, max_y, max_x);
-	if(direccion == KEY_LEFT){
-		if(memoria[X_DEF] >0){
+	int aux = memoria[100];
+	if (direccion == KEY_LEFT)
+	{
+		if (memoria[X_DEF] > 0)
+		{
 			memoria[X_DEF]--;
 		}
-	}else if(direccion == KEY_RIGHT){
-		if(memoria[X_DEF]<max_x){
+	}
+	else if (direccion == KEY_RIGHT)
+	{
+		if (memoria[X_DEF] < max_x)
+		{
 			memoria[X_DEF]++;
 		}
-	}else if(direccion == 32 && balas_activas < 10){
-		memoria[20+balas_activas] = memoria[X_DEF]+4;
-		memoria[30+balas_activas] = memoria[Y_DEF]+1;
-		balas_activas++;
+	}
+	else if (direccion == 32 && aux < 10)
+	{
+		memoria[20 + aux] = memoria[X_DEF] + 4;
+		memoria[30 + aux] = memoria[Y_DEF] + 1;
+		memoria[100]++;
 	}
 }
 
@@ -1073,39 +1128,212 @@ void mover_invasor(int direccion)
 {
 	int max_x = 0, max_y = 0;
 	getmaxyx(stdscr, max_y, max_x);
-	if(direccion == KEY_LEFT){
-		if(memoria[X_INV] >0){
+	int aux = memoria[101];
+	if (direccion == KEY_LEFT)
+	{
+		if (memoria[X_INV] > 0)
+		{
 			memoria[X_INV]--;
 		}
-	}else if(direccion == KEY_RIGHT){
-		if(memoria[X_INV]<max_x){
+	}
+	else if (direccion == KEY_RIGHT)
+	{
+		if (memoria[X_INV] < max_x)
+		{
 			memoria[X_INV]++;
 		}
-	}else if(direccion == 49 && balas_activas < 10){ // 1 | NAVE 1
-		memoria[40+balas_activas] = memoria[X_INV_1]+2;
-		memoria[50+balas_activas] = memoria[YF1]+1;
-		balas_activas++;
-	}else if(direccion == 50 && balas_activas < 10){ // 2 | NAVE 6
-		memoria[40+balas_activas] = memoria[X_INV_6]+2;
-		memoria[50+balas_activas] = memoria[YF2]+1;
-		balas_activas++;
-	}else if(direccion == 51 && balas_activas < 10){ // 3 | NAVE 11
-		memoria[40+balas_activas] = memoria[X_INV_11]+2;
-		memoria[50+balas_activas] = memoria[YF3]+1;
-		balas_activas++;
-	}else if(direccion == 52 && balas_activas < 10){ //4 | NAVE 16
-		memoria[40+balas_activas] = memoria[X_INV_16]+2;
-		memoria[50+balas_activas] = memoria[YF4]+1;
-		balas_activas++;
+	}
+	else if (direccion == 49 && aux < 10)
+	{ // 1 | NAVE 1
+		memoria[40 + aux] = memoria[X_INV_1] + 2;
+		memoria[50 + aux] = memoria[YF1] + 1;
+		memoria[101]++;
+	}
+	else if (direccion == 50 && aux < 10)
+	{ // 2 | NAVE 6
+		memoria[40 + aux] = memoria[X_INV_6] + 2;
+		memoria[50 + aux] = memoria[YF2] + 1;
+		memoria[101]++;
+	}
+	else if (direccion == 51 && aux < 10)
+	{ // 3 | NAVE 11
+		memoria[40 + aux] = memoria[X_INV_11] + 2;
+		memoria[50 + aux] = memoria[YF3] + 1;
+		memoria[101]++;
+	}
+	else if (direccion == 52 && aux < 10)
+	{ //4 | NAVE 16
+		memoria[40 + aux] = memoria[X_INV_16] + 2;
+		memoria[50 + aux] = memoria[YF4] + 1;
+		memoria[101]++;
 	}
 }
 
-void reiniciar_memoria(int id)
+void reiniciar_memoria()
 {
 	bando = 0;
 	primero = false;
 	direccion = 1;
-	balas_activas = 0;
-	//LockSemaphore(id, 0);
-	//LockSemaphore(id, 1);
+	memoria[0] = 0;
+}
+
+void *detectar_colisiones_defensor()
+{
+	while (memoria[1])
+	{
+		for (int i = 40; i < 50; i++)
+		{
+			if ((memoria[X_DEF] >= memoria[i]) && (memoria[i] <= memoria[X_DEF] + 11) && (memoria[i + 10] >= memoria[Y_DEF] - 4))
+			{
+				memoria[VIDAS_DEF]--;
+				memoria[101]--;
+				memoria[i] = -1;
+				memoria[i + 10] = -1;
+			}
+			usleep(500);
+		}
+	}
+}
+
+void *detectar_colisiones_invasor()
+{
+	while (memoria[1])
+	{
+		for (int i = 60; i < 80; i++)
+		{
+			if (memoria[i + 20] == 1)
+			{
+				switch (i)
+				{
+				case 60:
+					for (int d = 20; d < 30; d++)
+					{
+						if ((memoria[i] >= memoria[d] && memoria[d] <= memoria[i] + 6 && memoria[YF4] == memoria[d + 10]))
+						{
+							memoria[i + 20] = 0;
+							memoria[100]--;
+							memoria[d] = -1;
+							memoria[d + 10] = -1;
+							memoria[PUNTUACION] += 15;
+						}
+					}
+					break;
+				case 61:
+				case 62:
+				case 63:
+				case 64:
+					for (int d = 20; d < 30; d++)
+					{
+						if ((memoria[i] >= memoria[d] && memoria[d] <= memoria[i] + 4 && memoria[YF1] == memoria[d + 10]))
+						{
+							memoria[i + 20] = 0;
+							memoria[100]--;
+							memoria[d] = -1;
+							memoria[d + 10] = -1;
+							memoria[PUNTUACION] += 10;
+						}
+					}
+					break;
+				case 65:
+					for (int d = 20; d < 30; d++)
+					{
+						if ((memoria[i] >= memoria[d] && memoria[d] <= memoria[i] + 6 && memoria[YF4] == memoria[d + 10]))
+						{
+							memoria[i + 20] = 0;
+							memoria[100]--;
+							memoria[d] = -1;
+							memoria[d + 10] = -1;
+							memoria[PUNTUACION] += 15;
+						}
+					}
+					break;
+				case 66:
+				case 67:
+				case 68:
+				case 69:
+					for (int d = 20; d < 30; d++)
+					{
+						if ((memoria[i] >= memoria[d] && memoria[d] <= memoria[i] + 4 && memoria[YF2] == memoria[d + 10]))
+						{
+							memoria[i + 20] = 0;
+							memoria[100]--;
+							memoria[d] = -1;
+							memoria[d + 10] = -1;
+							memoria[PUNTUACION] += 10;
+						}
+					}
+					break;
+				case 70:
+					for (int d = 20; d < 30; d++)
+					{
+						if ((memoria[i] >= memoria[d] && memoria[d] <= memoria[i] + 6 && memoria[YF4] == memoria[d + 10]))
+						{
+							memoria[i + 20] = 0;
+							memoria[100]--;
+							memoria[d] = -1;
+							memoria[d + 10] = -1;
+							memoria[PUNTUACION] += 15;
+						}
+					}
+					break;
+				case 71:
+				case 72:
+				case 73:
+				case 74:
+					for (int d = 20; d < 30; d++)
+					{
+						if ((memoria[i] >= memoria[d] && memoria[d] <= memoria[i] + 4 && memoria[YF3] == memoria[d + 10]))
+						{
+							memoria[i + 20] = 0;
+							memoria[100]--;
+							memoria[d] = -1;
+							memoria[d + 10] = -1;
+							memoria[PUNTUACION] += 10;
+						}
+					}
+					break;
+				case 75:
+					for (int d = 20; d < 30; d++)
+					{
+						if ((memoria[i] >= memoria[d] && memoria[d] <= memoria[i] + 6 && memoria[YF4] == memoria[d + 10]))
+						{
+							memoria[i + 20] = 0;
+							memoria[100]--;
+							memoria[d] = -1;
+							memoria[d + 10] = -1;
+							memoria[PUNTUACION] += 15;
+						}
+					}
+					break;
+				case 76:
+				case 77:
+				case 78:
+				case 79:
+					for (int d = 20; d < 30; d++)
+					{
+						if ((memoria[i] >= memoria[d] && memoria[d] <= memoria[i] + 4 && memoria[YF4] == memoria[d + 10]))
+						{
+							memoria[i + 20] = 0;
+							memoria[100]--;
+							memoria[d] = -1;
+							memoria[d + 10] = -1;
+							memoria[PUNTUACION] += 10;
+						}
+					}
+					break;
+				}
+			}
+		}
+		for (int d = 20; d < 30; d++)
+		{
+			if ((memoria[X_INV] >= memoria[d] && memoria[d] <= memoria[X_INV] + 11 && memoria[Y_INV] == memoria[d + 10]))
+			{
+				memoria[VIDAS_INV]--;
+				memoria[100]--;
+				memoria[d] = -1;
+				memoria[d + 10] = -1;
+			}
+		}
+		usleep(500);
+	}
 }
